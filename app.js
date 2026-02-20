@@ -1,7 +1,11 @@
 // Created: 2026-02-19 09:00
-// 쇼핑 리스트 앱 - LocalStorage 기반
+// Modified: 2026-02-20 - LocalStorage → Supabase 연동
+// 쇼핑 리스트 앱 - Supabase 데이터베이스 기반
 
-const STORAGE_KEY = 'shopping-list';
+const SUPABASE_URL = 'https://wyesdaepjqebmgevhyll.supabase.co';
+const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Ind5ZXNkYWVwanFlYm1nZXZoeWxsIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzE1MzY5NTksImV4cCI6MjA4NzExMjk1OX0.9kkJrS47pcO5W8P0FGtVb6N3Mt3lsTzGNQnYaqdoWt0';
+
+const db = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
 const form = document.getElementById('add-form');
 const input = document.getElementById('item-input');
@@ -10,15 +14,14 @@ const countEl = document.getElementById('item-count');
 const emptyMsg = document.getElementById('empty-msg');
 const clearBtn = document.getElementById('clear-completed-btn');
 
-// LocalStorage에서 리스트 불러오기
-function loadItems() {
-  const data = localStorage.getItem(STORAGE_KEY);
-  return data ? JSON.parse(data) : [];
-}
-
-// LocalStorage에 리스트 저장
-function saveItems(items) {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(items));
+// Supabase에서 항목 불러오기
+async function loadItems() {
+  const { data, error } = await db
+    .from('shopping_items')
+    .select('*')
+    .order('created_at', { ascending: true });
+  if (error) throw error;
+  return data;
 }
 
 // 항목 개수 업데이트
@@ -41,7 +44,7 @@ function createItemElement(item) {
 
   const checkbox = document.createElement('div');
   checkbox.className = 'checkbox' + (item.checked ? ' checked' : '');
-  checkbox.addEventListener('click', () => toggleItem(item.id));
+  checkbox.addEventListener('click', () => toggleItem(item.id, item.checked));
 
   const text = document.createElement('span');
   text.className = 'item-text' + (item.checked ? ' completed' : '');
@@ -58,65 +61,77 @@ function createItemElement(item) {
 }
 
 // 전체 리스트 렌더링
-function render() {
-  const items = loadItems();
-  listEl.innerHTML = '';
-  items.forEach(item => {
-    listEl.appendChild(createItemElement(item));
-  });
-  updateCount(items);
-}
-
-// 항목 추가
-function addItem(name) {
-  const items = loadItems();
-  items.push({
-    id: Date.now().toString(),
-    name: name.trim(),
-    checked: false
-  });
-  saveItems(items);
-  render();
-}
-
-// 항목 체크/해제 토글
-function toggleItem(id) {
-  const items = loadItems();
-  const item = items.find(i => i.id === id);
-  if (item) {
-    item.checked = !item.checked;
-    saveItems(items);
-    render();
+async function render() {
+  try {
+    const items = await loadItems();
+    listEl.innerHTML = '';
+    items.forEach(item => listEl.appendChild(createItemElement(item)));
+    updateCount(items);
+  } catch (error) {
+    console.error('데이터 로딩 오류:', error);
   }
 }
 
+// 항목 추가
+async function addItem(name) {
+  const { error } = await db
+    .from('shopping_items')
+    .insert({ name: name.trim() });
+  if (error) throw error;
+  await render();
+}
+
+// 항목 체크/해제 토글
+async function toggleItem(id, currentChecked) {
+  const { error } = await db
+    .from('shopping_items')
+    .update({ checked: !currentChecked })
+    .eq('id', id);
+  if (error) throw error;
+  await render();
+}
+
 // 항목 삭제
-function deleteItem(id) {
-  const items = loadItems().filter(i => i.id !== id);
-  saveItems(items);
-  render();
+async function deleteItem(id) {
+  const { error } = await db
+    .from('shopping_items')
+    .delete()
+    .eq('id', id);
+  if (error) throw error;
+  await render();
 }
 
 // 완료된 항목 모두 삭제
-function clearCompleted() {
-  const items = loadItems();
-  const remaining = items.filter(i => !i.checked);
-  if (remaining.length === items.length) return;
-  saveItems(remaining);
-  render();
+async function clearCompleted() {
+  const { error } = await db
+    .from('shopping_items')
+    .delete()
+    .eq('checked', true);
+  if (error) throw error;
+  await render();
 }
 
 // 이벤트 리스너
-form.addEventListener('submit', (e) => {
+form.addEventListener('submit', async (e) => {
   e.preventDefault();
   const value = input.value.trim();
   if (!value) return;
-  addItem(value);
-  input.value = '';
-  input.focus();
+  try {
+    await addItem(value);
+    input.value = '';
+    input.focus();
+  } catch (error) {
+    console.error('항목 추가 오류:', error);
+  }
 });
 
-clearBtn.addEventListener('click', clearCompleted);
+clearBtn.addEventListener('click', async () => {
+  try {
+    await clearCompleted();
+  } catch (error) {
+    console.error('완료 항목 삭제 오류:', error);
+  }
+});
 
 // 초기 렌더링
 render();
